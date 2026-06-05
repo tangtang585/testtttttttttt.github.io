@@ -1,1 +1,337 @@
-# testtttttttttt.github.io
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Multiplayer Dino + Leave Button</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.2.2/mqtt.min.js"></script>
+    <style>
+        * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+        body { font-family: sans-serif; text-align: center; background: #f0f2f5; margin: 0; padding: 10px; }
+        canvas { background: white; border: 2px solid #333; border-radius: 6px; display: block; margin: 10px auto; width: 100%; max-width: 600px; height: auto; }
+        .panel { background: white; padding: 15px; border-radius: 8px; max-width: 600px; margin: 0 auto 10px auto; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .btn { padding: 12px 15px; font-size: 14px; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; color: white; margin: 5px; }
+        .blue { background: #0070f3; } .green { background: #16a34a; } .red { background: #dc2626; }
+        input[type="text"], input[type="number"] { padding: 11px; font-size: 14px; width: 50%; max-width: 180px; text-align: center; border: 1px solid #ccc; border-radius: 4px; margin-right: 5px; user-select: text; -webkit-user-select: text; }
+        #touch-pad { background: #222; color: white; width: 100%; max-width: 600px; margin: 10px auto; padding: 25px; font-size: 1.2rem; font-weight: bold; border-radius: 8px; touch-action: manipulation; }
+        #status { font-weight: bold; color: #d97706; margin: 8px 0; }
+        .row { margin: 10px 0; display: flex; justify-content: center; align-items: center; }
+        .cheats { margin-top: 8px; display: flex; gap: 15px; justify-content: center; align-items: center; font-size: 0.9rem; flex-wrap: wrap; }
+        
+        #gameSpeed { width: 60px; padding: 6px; margin-left: 4px; text-align: center; display: inline-block; }
+
+        /* Chat Box Styles */
+        .chat-container { background: white; border-radius: 8px; max-width: 600px; margin: 10px auto; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: left; }
+        #chat-log { height: 100px; overflow-y: auto; border: 1px solid #ddd; padding: 8px; border-radius: 4px; background: #fafafa; font-size: 13px; margin-bottom: 8px; user-select: text; -webkit-user-select: text; }
+        .chat-row { display: flex; }
+        #chat-input { flex-grow: 1; padding: 10px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px 0 0 4px; text-align: left; max-width: none; }
+        #chat-send { border-radius: 0 4px 4px 0; margin: 0; padding: 10px 15px; background: #374151; }
+    </style>
+</head>
+<body>
+
+    <h1>🦖 Multiplayer Dino Panel</h1>
+    
+    <div class="panel">
+        <div>Your Code: <strong id="my-id" style="color:#0070f3; font-size: 1.2rem;">...</strong></div>
+        
+        <div class="row" id="connection-controls">
+            <input type="text" id="friend-code" placeholder="Friend's Code">
+            <button class="btn blue" onclick="joinWithCode()">🔌 Join Code</button>
+        </div>
+
+        <button class="btn green" id="randomBtn" onclick="findRandomMatch()">🌐 Find Random Match</button>
+        <button class="btn red" id="respawnBtn" onclick="respawnMe()" style="display:none;">🔄 Respawn</button>
+        
+        <button class="btn red" id="leaveBtn" onclick="leaveMatch()" style="display:none;">🚪 Leave Match</button>
+        
+        <div id="status">Connecting to network server...</div>
+        
+        <div class="cheats">
+            <label><input type="checkbox" id="godMode"> 🛡️ God Mode</label>
+            <label><input type="checkbox" id="infJump"> 🚀 Inf Jump</label>
+            <label>🏃 Speed: <input type="number" id="gameSpeed" value="5" min="1" max="30" oninput="changeSpeed(this.value)"></label>
+        </div>
+    </div>
+
+    <canvas id="game" width="600" height="150"></canvas>
+    <div id="touch-pad">TAP TO JUMP</div>
+
+    <div class="chat-container">
+        <div id="chat-log"><i>System: Connect to a friend to start chatting!</i></div>
+        <div class="chat-row">
+            <input type="text" id="chat-input" placeholder="Type a message..." onkeydown="if(event.key==='Enter') sendChat()">
+            <button class="btn" id="chat-send" onclick="sendChat()">💬 Send</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('game');
+        const ctx = canvas.getContext('2d');
+        
+        const myShortId = Math.floor(1000 + Math.random() * 9000).toString();
+        const peer = new Peer('dino-' + myShortId, {
+            config: {
+                'iceServers': [
+                    { url: 'stun:stun.l.google.com:19302' },
+                    { url: 'stun:stun1.l.google.com:19302' }
+                ]
+            }
+        }); 
+        
+        let conn, mqttClient;
+
+        // GAME VARIABLES
+        let p1 = { x: 50, y: 110, vy: 0, isJumping: false, isDead: false, color: '#0070f3' }; 
+        let p2 = { x: 100, y: 110, isDead: false, score: 0, color: '#e11d48' }; 
+        let cactus = { x: 600, y: 115, width: 15, height: 20, speed: 5 };
+        
+        let score = 0;
+        let lastScoreTick = Date.now();
+
+        peer.on('open', () => {
+            document.getElementById('my-id').innerText = myShortId;
+            document.getElementById('status').innerText = "✅ Online! Share code or look for random match.";
+            document.getElementById('status').style.color = "#16a34a";
+        });
+
+        peer.on('connection', (c) => { conn = c; handleData(); });
+
+        function joinWithCode() {
+            const targetCode = document.getElementById('friend-code').value.trim();
+            if (!targetCode) return alert("Type a code first!");
+            document.getElementById('status').innerText = "Connecting to " + targetCode + "...";
+            conn = peer.connect('dino-' + targetCode);
+            handleData();
+        }
+
+        function findRandomMatch() {
+            document.getElementById('status').innerText = "🔍 Searching for players online...";
+            document.getElementById('status').style.color = "#d97706";
+            mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
+            mqttClient.on('connect', () => {
+                mqttClient.subscribe('dino_lobby_2026');
+                mqttClient.publish('dino_lobby_2026', JSON.stringify({ id: myShortId }));
+            });
+            mqttClient.on('message', (topic, msg) => {
+                const player = JSON.parse(msg.toString());
+                if (player.id !== myShortId) {
+                    if (Number(myShortId) < Number(player.id)) {
+                        mqttClient.end();
+                        document.getElementById('status').innerText = "Found player! Linking up...";
+                        conn = peer.connect('dino-' + player.id);
+                        handleData();
+                    } else {
+                        document.getElementById('status').innerText = "Player found! Waiting for them to link...";
+                        setTimeout(() => { if(mqttClient) mqttClient.end(); }, 3000);
+                    }
+                }
+            });
+        }
+
+        function handleData() {
+            conn.on('open', () => {
+                document.getElementById('status').innerText = "🟢 CONNECTED TO REAL PLAYER!";
+                document.getElementById('status').style.color = "#16a34a";
+                appendLog("<i>System: Connected! You can chat now.</i>");
+                
+                // Hide search/join elements and display the Leave button instead
+                document.getElementById('connection-controls').style.display = 'none';
+                document.getElementById('randomBtn').style.display = 'none';
+                document.getElementById('leaveBtn').style.display = 'inline-block';
+                
+                let remoteId = Number(conn.peer.replace('dino-', ''));
+                if (Number(myShortId) < remoteId) cactus.x = 600;
+                
+                let currentSpd = parseFloat(document.getElementById('gameSpeed').value) || 5;
+                conn.send({ speedSync: currentSpd });
+            });
+            
+            conn.on('data', (data) => {
+                if (data.chat) {
+                    appendLog(`<b style="color: #e11d48;">Friend:</b> ${escapeHTML(data.chat)}`);
+                    return;
+                }
+
+                if (data.speedSync) {
+                    document.getElementById('gameSpeed').value = data.speedSync;
+                    cactus.speed = data.speedSync;
+                    return;
+                }
+
+                p2.y = data.y;
+                p2.isDead = data.isDead;
+                p2.score = data.score; 
+                
+                let remoteId = Number(conn.peer.replace('dino-', ''));
+                if (remoteId < Number(myShortId)) {
+                    cactus.x = data.cx;
+                }
+            });
+
+            // FIXED: Automatically detect if your friend leaves or drops out
+            conn.on('close', () => {
+                cleanUpMatchState("Friend disconnected or left the game.");
+            });
+        }
+
+        // NEW: LEAVE MATCH LOGIC ENGINE
+        function leaveMatch() {
+            if (conn) {
+                conn.close(); // Tells the peer network we are shutting the tunnel down
+            }
+            cleanUpMatchState("You left the match.");
+        }
+
+        // NEW: RESET LOBBY STATE ROUTINE
+        function cleanUpMatchState(reasonMessage) {
+            conn = null;
+            
+            // Bring lobby controls back up
+            document.getElementById('connection-controls').style.display = 'flex';
+            document.getElementById('randomBtn').style.display = 'inline-block';
+            document.getElementById('leaveBtn').style.display = 'none';
+            
+            // Set alert feedback states
+            document.getElementById('status').innerText = "✅ Online! Share code or look for random match.";
+            document.getElementById('status').style.color = "#16a34a";
+            appendLog(`<i>System: ${reasonMessage}</i>`);
+            
+            // Erase opponent records off the canvas context entirely
+            p2.score = 0;
+            p2.isDead = false;
+            p2.y = 110;
+        }
+
+        function changeSpeed(val) {
+            let num = parseFloat(val);
+            if (isNaN(num) || num < 1) num = 1;
+            cactus.speed = num;
+            if (conn && conn.open) {
+                conn.send({ speedSync: num });
+            }
+        }
+
+        function sendChat() {
+            const input = document.getElementById('chat-input');
+            const text = input.value.trim();
+            if (!text) return;
+
+            if (conn && conn.open) {
+                conn.send({ chat: text }); 
+                appendLog(`<b style="color: #0070f3;">You:</b> ${escapeHTML(text)}`);
+                input.value = ''; 
+            } else {
+                alert("Connect to a friend before sending messages!");
+            }
+        }
+
+        function appendLog(htmlContent) {
+            const log = document.getElementById('chat-log');
+            log.innerHTML += "<div>" + htmlContent + "</div>";
+            log.scrollTop = log.scrollHeight; 
+        }
+
+        function escapeHTML(str) {
+            return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        function jump() {
+            if (!p1.isDead) {
+                if (document.getElementById('infJump').checked || !p1.isJumping) {
+                    p1.vy = -10;
+                    p1.isJumping = true;
+                }
+            }
+        }
+        
+        window.addEventListener('keydown', e => { 
+            if(document.activeElement.tagName === 'INPUT') return;
+            if(e.code === 'Space') jump(); 
+        });
+        document.getElementById('touch-pad').addEventListener('touchstart', (e) => { e.preventDefault(); jump(); });
+        document.getElementById('touch-pad').addEventListener('mousedown', jump);
+
+        function respawnMe() {
+            p1.isDead = false;
+            p1.y = 110; p1.vy = 0; p1.isJumping = false; 
+            score = 0;            
+            lastScoreTick = Date.now(); 
+            document.getElementById('respawnBtn').style.display = 'none';
+
+            let configuredSpeed = parseFloat(document.getElementById('gameSpeed').value) || 5;
+            cactus.speed = configuredSpeed;
+
+            let remoteId = (conn && conn.open) ? Number(conn.peer.replace('dino-', '')) : null;
+            if (!remoteId || Number(myShortId) < remoteId) {
+                cactus.x = 600;
+            }
+        }
+
+        // LOOP ENGINE
+        function loop() {
+            p1.vy += 0.6; p1.y += p1.vy;
+            if (p1.y > 110) { p1.y = 110; p1.vy = 0; p1.isJumping = false; }
+
+            if (!p1.isDead) {
+                if (p1.x < cactus.x + cactus.width && p1.x + 25 > cactus.x &&
+                    p1.y < cactus.y + cactus.height && p1.y + 25 > cactus.y && 
+                    !document.getElementById('godMode').checked) {
+                        p1.isDead = true;
+                        document.getElementById('respawnBtn').style.display = 'inline-block';
+                }
+
+                let currentTime = Date.now();
+                if (currentTime - lastScoreTick >= 100) {
+                    score++;
+                    lastScoreTick = currentTime;
+                }
+            }
+
+            let remoteId = (conn && conn.open) ? Number(conn.peer.replace('dino-', '')) : null;
+            let isHost = !remoteId || Number(myShortId) < remoteId;
+
+            if (isHost) {
+                let targetSpeed = parseFloat(document.getElementById('gameSpeed').value) || 5;
+                if(cactus.speed !== targetSpeed && !p1.isDead) {
+                    cactus.speed = targetSpeed;
+                }
+                
+                cactus.x -= cactus.speed;
+                if (cactus.x < -20) { 
+                    cactus.x = 600; 
+                    let currentSetting = parseFloat(document.getElementById('gameSpeed').value) || 5;
+                    document.getElementById('gameSpeed').value = (currentSetting + 0.2).toFixed(1);
+                    changeSpeed(document.getElementById('gameSpeed').value);
+                }
+            }
+
+            if(conn && conn.open) conn.send({ y: p1.y, isDead: p1.isDead, cx: cactus.x, score: score });
+
+            ctx.clearRect(0, 0, 600, 150);
+            ctx.fillStyle = '#6b7280'; ctx.fillRect(0, 135, 600, 2); // Ground
+            ctx.fillStyle = p1.isDead ? '#9ca3af' : p1.color; ctx.fillRect(p1.x, p1.y, 25, 25); // P1
+            
+            // Only draw friend's box frame if a connected match state is active
+            if (conn && conn.open) {
+                ctx.fillStyle = p2.isDead ? '#9ca3af' : p2.color; ctx.fillRect(p2.x, p2.y, 25, 25); // P2
+            }
+            
+            ctx.fillStyle = '#15803d'; ctx.fillRect(cactus.x, cactus.y, cactus.width, cactus.height); // Cactus
+            
+            ctx.fillStyle = '#374151'; 
+            ctx.font = 'bold 14px sans-serif'; 
+            
+            if (conn && conn.open) {
+                ctx.fillText(`You: ${score}   |   Friend: ${p2.score}`, 15, 25);
+            } else {
+                ctx.fillText(`You: ${score}   (Solo)`, 15, 25);
+            }
+
+            requestAnimationFrame(loop);
+        }
+        loop();
+    </script>
+</body>
+</html>
