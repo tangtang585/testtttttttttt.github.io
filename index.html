@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>6-Player Dino (Fixed White Screen)</title>
+    <title>6-Player Dino (Position Bug Fixed)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.2.2/mqtt.min.js"></script>
     <style>
         * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
@@ -15,6 +15,7 @@
         input[type="text"], input[type="number"] { padding: 11px; font-size: 14px; width: 50%; max-width: 180px; text-align: center; border: 1px solid #ccc; border-radius: 4px; margin-right: 5px; user-select: text; -webkit-user-select: text; }
         #touch-pad { background: #222; color: white; width: 100%; max-width: 600px; margin: 10px auto; padding: 25px; font-size: 1.2rem; font-weight: bold; border-radius: 8px; touch-action: manipulation; }
         #status { font-weight: bold; color: #d97706; margin: 8px 0; }
+        #lobby-count { font-size: 1.1rem; color: #7c3aed; font-weight: bold; margin: 5px 0; }
         .row { margin: 10px 0; display: flex; justify-content: center; align-items: center; }
         .cheats { margin-top: 8px; display: flex; gap: 15px; justify-content: center; align-items: center; font-size: 0.9rem; flex-wrap: wrap; }
         #gameSpeed { width: 60px; padding: 6px; margin-left: 4px; text-align: center; display: inline-block; }
@@ -27,11 +28,13 @@
 </head>
 <body>
 
-    <h1>🦖 6-Player Dino (White Screen Fixed)</h1>
+    <h1>🦖 6-Player Dino (Position Bug Fixed)</h1>
     
     <div class="panel">
         <div>Your Room Code: <strong id="my-id" style="color:#0070f3; font-size: 1.2rem;">...</strong></div>
         
+        <div id="lobby-count">👥 Players in lobby: 1 / 6</div>
+
         <div class="row" id="connection-controls">
             <input type="text" id="friend-code" placeholder="Enter Room Code">
             <button class="btn blue" onclick="joinRoomCode()">🔌 Join Room</button>
@@ -41,7 +44,7 @@
         <button class="btn red" id="respawnBtn" onclick="respawnMe()" style="display:none;">🔄 Respawn</button>
         <button class="btn red" id="leaveBtn" onclick="leaveMatch()" style="display:none;">🚪 Leave Match</button>
         
-        <div id="status">⏳ Connecting to network server (You can still play solo)...</div>
+        <div id="status">⏳ Connecting to network server...</div>
         
         <div class="cheats">
             <label><input type="checkbox" id="godMode"> 🛡️ God Mode</label>
@@ -54,7 +57,7 @@
     <div id="touch-pad">TAP TO JUMP</div>
 
     <div class="chat-container">
-        <div id="chat-log"><i>System: Starting game loop...</i></div>
+        <div id="chat-log"><i>System: Starting game...</i></div>
         <div class="chat-row">
             <input type="text" id="chat-input" placeholder="Type a message to all players..." onkeydown="if(event.key==='Enter') sendChat()">
             <button class="btn" id="chat-send" onclick="sendChat()">💬 Send</button>
@@ -75,35 +78,32 @@
         const colorPalette = ['#0070f3', '#e11d48', '#16a34a', '#d97706', '#7c3aed', '#db2777'];
         let myColor = colorPalette[Math.floor(Math.random() * colorPalette.length)];
 
-        let p1 = { id: myShortId, x: 50, y: 110, vy: 0, isJumping: false, isDead: false, color: myColor, score: 0 }; 
+        // Local player properties
+        let p1 = { id: myShortId, x: 40, y: 110, vy: 0, isJumping: false, isDead: false, color: myColor, score: 0 }; 
         let players = {}; 
         let cactus = { x: 600, y: 115, width: 15, height: 20, speed: 5 };
         
         let lastScoreTick = Date.now();
 
-        // FIXED: Safe wrapper initialization so game plays even if scripts are offline
         try {
             if (typeof mqtt !== 'undefined') {
                 mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
                     keepalive: 10,
-                    reconnectPeriod: 2000,
+                    reconnectPeriod: 1000,
                     connectTimeout: 5000
                 });
                 
                 mqttClient.on('connect', () => {
                     isServerConnected = true;
-                    document.getElementById('status').innerText = "✅ Server Ready! Join a room code or match.";
+                    document.getElementById('status').innerText = "✅ Server Ready!";
                     document.getElementById('status').style.color = "#16a34a";
-                    document.getElementById('chat-log').innerHTML = "<i>System: Connected to server network layer. Ready for multiplayer!</i>";
+                    document.getElementById('chat-log').innerHTML = "<i>System: Connected to server network layer. Ready!</i>";
                 });
 
                 mqttClient.on('error', () => {
                     isServerConnected = false;
-                    document.getElementById('status').innerText = "⚠️ Server busy. Playing in Solo Mode.";
-                    document.getElementById('status').style.color = "#d97706";
                 });
                 
-                // Message handling setup
                 mqttClient.on('message', (topic, msg) => {
                     if (!currentRoom) return;
                     try {
@@ -118,6 +118,7 @@
                         if (data.type === 'leave') {
                             delete players[data.id];
                             appendLog(`<i>System: Player [${data.id.substring(0,4)}] disconnected.</i>`);
+                            updateLobbyCount();
                             return;
                         }
 
@@ -127,19 +128,27 @@
                                 appendLog(`<i>System: Player [${data.id.substring(0,4)}] joined!</i>`);
                             }
 
+                            // FIXED POSITIONING LOGIC: Sort all IDs so locations never overlap or glitch out
                             let activeKeys = Object.keys(players);
                             if (!players[data.id]) activeKeys.push(data.id);
+                            activeKeys.push(myShortId);
                             activeKeys.sort();
-                            let layoutIndex = activeKeys.indexOf(data.id) + 1;
+
+                            // Adjust our own X layout dynamic positioning slot
+                            p1.x = 40 + (activeKeys.indexOf(myShortId) * 45);
+
+                            let layoutIndex = activeKeys.indexOf(data.id);
 
                             players[data.id] = {
-                                x: 50 + (layoutIndex * 40),
+                                x: 40 + (layoutIndex * 45),
                                 y: data.y,
                                 isDead: data.isDead,
                                 score: data.score,
                                 color: data.color,
                                 lastSeen: Date.now()
                             };
+
+                            updateLobbyCount();
 
                             if (isHost()) {
                                 if (data.speedSync) {
@@ -156,12 +165,12 @@
                         }
                     } catch (e) {}
                 });
-            } else {
-                throw new Error("MQTT library not loaded");
             }
-        } catch(err) {
-            document.getElementById('status').innerText = "📴 Offline Mode (No Internet). Play solo!";
-            document.getElementById('status').style.color = "#7f1d1d";
+        } catch(err) {}
+
+        function updateLobbyCount() {
+            let total = Object.keys(players).length + 1;
+            document.getElementById('lobby-count').innerText = `👥 Players in lobby: ${total} / 6`;
         }
 
         function joinRoomCode() {
@@ -175,18 +184,19 @@
         }
 
         function setupRoomChannels(roomName) {
-            if (!isServerConnected) return alert("Still waiting for server connection. Please try again in a few seconds.");
-            if(currentRoom) mqttClient.unsubscribe('dino_royale/' + currentRoom);
+            if (!isServerConnected) return alert("Still connecting to network. Try again in 2 seconds.");
+            if(currentRoom) mqttClient.unsubscribe('dino_fixed/' + currentRoom);
             
             currentRoom = roomName;
             players = {}; 
-            mqttClient.subscribe('dino_royale/' + currentRoom);
+            mqttClient.subscribe('dino_fixed/' + currentRoom);
             
             document.getElementById('connection-controls').style.display = 'none';
             document.getElementById('randomBtn').style.display = 'none';
             document.getElementById('leaveBtn').style.display = 'inline-block';
             document.getElementById('status').innerText = `🎮 Active Room: ${roomName}`;
-            appendLog(`<i>System: Entered room code [${roomName}]. Waiting for others...</i>`);
+            appendLog(`<i>System: Entered room code [${roomName}].</i>`);
+            updateLobbyCount();
         }
 
         function isHost() {
@@ -209,7 +219,7 @@
             if (!text) return;
 
             if (currentRoom && isServerConnected) {
-                mqttClient.publish('dino_royale/' + currentRoom, JSON.stringify({ type: 'chat', id: myShortId, color: myColor, text: text }));
+                mqttClient.publish('dino_fixed/' + currentRoom, JSON.stringify({ type: 'chat', id: myShortId, color: myColor, text: text }));
                 appendLog(`<b style="color: ${myColor};">You:</b> ${escapeHTML(text)}`);
                 input.value = '';
             }
@@ -217,16 +227,18 @@
 
         function leaveMatch() {
             if (currentRoom && isServerConnected) {
-                mqttClient.publish('dino_royale/' + currentRoom, JSON.stringify({ type: 'leave', id: myShortId }));
-                mqttClient.unsubscribe('dino_royale/' + currentRoom);
+                mqttClient.publish('dino_fixed/' + currentRoom, JSON.stringify({ type: 'leave', id: myShortId }));
+                mqttClient.unsubscribe('dino_fixed/' + currentRoom);
             }
             currentRoom = null;
             players = {};
+            p1.x = 40;
             
             document.getElementById('connection-controls').style.display = 'flex';
             document.getElementById('randomBtn').style.display = 'inline-block';
             document.getElementById('leaveBtn').style.display = 'none';
-            document.getElementById('status').innerText = "✅ Server Ready! Join a room code or match.";
+            document.getElementById('status').innerText = "✅ Server Ready!";
+            updateLobbyCount();
             appendLog("<i>System: You left the room.</i>");
         }
 
@@ -269,7 +281,6 @@
             }
         }
 
-        // LOOP ENGINE
         function loop() {
             p1.vy += 0.6; p1.y += p1.vy;
             if (p1.y > 110) { p1.y = 110; p1.vy = 0; p1.isJumping = false; }
@@ -304,15 +315,16 @@
                 }
             }
 
-            // Cleanup missing players
             let now = Date.now();
             Object.keys(players).forEach(id => {
-                if (now - players[id].lastSeen > 4000) delete players[id];
+                if (now - players[id].lastSeen > 3000) {
+                    delete players[id];
+                    updateLobbyCount();
+                }
             });
 
-            // Network broadcast
             if (currentRoom && isServerConnected) {
-                mqttClient.publish('dino_royale/' + currentRoom, JSON.stringify({
+                mqttClient.publish('dino_fixed/' + currentRoom, JSON.stringify({
                     type: 'update',
                     id: myShortId,
                     y: p1.y,
@@ -325,7 +337,6 @@
                 }));
             }
 
-            // RENDERING CANVAS (Will now run instantly!)
             ctx.clearRect(0, 0, 600, 150);
             ctx.fillStyle = '#6b7280'; ctx.fillRect(0, 135, 600, 2); // Ground
             
@@ -333,17 +344,15 @@
             ctx.fillStyle = p1.isDead ? '#9ca3af' : p1.color; 
             ctx.fillRect(p1.x, p1.y, 25, 25); 
 
-            // Draw Others
+            // Draw Opponents
             Object.keys(players).forEach(id => {
                 let opp = players[id];
                 ctx.fillStyle = opp.isDead ? '#d1d5db' : opp.color;
                 ctx.fillRect(opp.x, opp.y, 25, 25);
             });
             
-            // Draw Cactus
             ctx.fillStyle = '#15803d'; ctx.fillRect(cactus.x, cactus.y, cactus.width, cactus.height); 
             
-            // Scores
             ctx.fillStyle = '#374151'; 
             ctx.font = 'bold 11px sans-serif'; 
             let scoreString = `You: ${p1.score}`;
@@ -354,8 +363,6 @@
 
             requestAnimationFrame(loop);
         }
-        
-        // Kick off the visual graphics engine immediately
         loop();
     </script>
 </body>
