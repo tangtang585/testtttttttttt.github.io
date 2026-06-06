@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>6-Player Dino Arena (Device Aware)</title>
+    <title>6-Player Dino Arena (Moving Map Edition)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.2.2/mqtt.min.js"></script>
     <style>
         * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
@@ -117,7 +117,6 @@
     </div>
 
     <script>
-        // DEVICE DETECTION ENGINE
         function detectDeviceAndAdjustUI() {
             const ua = navigator.userAgent.toLowerCase();
             const isMobile = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(ua);
@@ -134,7 +133,6 @@
             }
         }
         
-        // Execute immediately on start
         detectDeviceAndAdjustUI();
 
         const canvas = document.getElementById('game');
@@ -170,6 +168,9 @@
         let selectedTool = 'brick'; 
         let mapBlocks = []; 
         const GRID_SIZE = 25; 
+
+        // WORLD SCROLL OFFSET ENGINE
+        let worldXOffset = 0; 
 
         let bgVideoElement = null; 
         let currentMapVideoUrl = '';
@@ -411,6 +412,7 @@
                             } else {
                                 if (data.isHostPlayer) {
                                     cactus.x = data.cx; cactus.speed = data.speed;
+                                    if(data.wx !== undefined) worldXOffset = data.wx; // Sync host world offset
                                 }
                             }
                         }
@@ -436,7 +438,7 @@
                 mqttClient.publish('dino_arena/' + currentRoom, JSON.stringify({ type: 'leave', id: myShortId }));
                 mqttClient.unsubscribe('dino_arena/' + currentRoom);
             }
-            currentRoom = roomName; players = {}; mapBlocks = [];
+            currentRoom = roomName; players = {}; mapBlocks = []; worldXOffset = 0;
             p1.x = 40; p1.score = 0; p1.isDead = false;
             document.getElementById('respawnBtn').style.display = 'none';
             mqttClient.subscribe('dino_arena/' + currentRoom);
@@ -486,9 +488,13 @@
             const rect = canvas.getBoundingClientRect();
             const scaleX = canvas.width / rect.width; const scaleY = canvas.height / rect.height;
             const clickX = (e.clientX - rect.left) * scaleX; const clickY = (e.clientY - rect.top) * scaleY;
-            const col = Math.floor(clickX / GRID_SIZE); const row = Math.floor(clickY / GRID_SIZE);
+            
+            // Factor in world offset rotation so clicked block anchors down into the actual moving layout grid!
+            const targetWorldX = clickX + worldXOffset;
+            const col = Math.floor(targetWorldX / GRID_SIZE); 
+            const row = Math.floor(clickY / GRID_SIZE);
 
-            if(col < 3 && row > 3) return;
+            if(clickX < 100 && row > 3) return; // Prevent trapping spawn points
             const existingIndex = mapBlocks.findIndex(b => b.r === row && b.c === col);
             if(existingIndex > -1) mapBlocks.splice(existingIndex, 1);
             else mapBlocks.push({ r: row, c: col, t: selectedTool });
@@ -576,8 +582,20 @@
                 if (!isBuildMode) { p1.vy += 0.6; p1.y += p1.vy; }
                 if (p1.y > 110) { p1.y = 110; p1.vy = 0; p1.isJumping = false; }
 
+                // Map Translation and Scrolling Logic Control
+                if (isHost() && !isBuildMode && !p1.isDead) {
+                    worldXOffset += cactus.speed;
+                }
+
                 mapBlocks.forEach(b => {
-                    let bx = b.c * GRID_SIZE; let by = b.r * GRID_SIZE;
+                    // Convert the absolute world column tracking data to actual real-time screen pixels
+                    let bx = (b.c * GRID_SIZE) - worldXOffset;
+                    
+                    // Seamless layout wrapper: If block slides fully left, it wraps around endlessly to right!
+                    while (bx < -GRID_SIZE) { bx += 800; } 
+                    
+                    let by = b.r * GRID_SIZE;
+
                     if (p1.x + 25 > bx && p1.x < bx + GRID_SIZE) {
                         if (b.t === 'brick' || b.t === undefined) {
                             if (p1.y + 25 >= by && p1.y + 25 - p1.vy <= by + 8 && p1.vy >= 0) {
@@ -621,7 +639,7 @@
 
                 if (currentRoom && isServerConnected) {
                     mqttClient.publish('dino_arena/' + currentRoom, JSON.stringify({
-                        type: 'update', id: myShortId, name: currentNameSetting, y: p1.y, isDead: p1.isDead, score: p1.score, color: myColor, costume: p1.costume, assetUrl: (p1.assetUrl === 'local_blob' ? '' : p1.assetUrl), isHostPlayer: isHost(), cx: cactus.x, speed: cactus.speed
+                        type: 'update', id: myShortId, name: currentNameSetting, y: p1.y, isDead: p1.isDead, score: p1.score, color: myColor, costume: p1.costume, assetUrl: (p1.assetUrl === 'local_blob' ? '' : p1.assetUrl), isHostPlayer: isHost(), cx: cactus.x, speed: cactus.speed, wx: worldXOffset
                     }));
                 }
 
@@ -642,12 +660,16 @@
 
                 ctx.fillStyle = '#6b7280'; ctx.fillRect(0, 135, 600, 2); 
                 
+                // Draw Blocks dynamically with offset calculations applied
                 mapBlocks.forEach(b => {
-                    let bx = b.c * GRID_SIZE; let by = b.r * GRID_SIZE;
+                    let bx = (b.c * GRID_SIZE) - worldXOffset;
+                    while (bx < -GRID_SIZE) { bx += 800; } 
+
                     if (b.t === 'brick' || b.t === undefined) {
-                        ctx.fillStyle = "#b45309"; ctx.fillRect(bx, by, GRID_SIZE, GRID_SIZE);
+                        ctx.fillStyle = "#b45309"; ctx.fillRect(bx, by = b.r * GRID_SIZE, GRID_SIZE, GRID_SIZE);
                         ctx.strokeStyle = "#78350f"; ctx.lineWidth = 1.5; ctx.strokeRect(bx, by, GRID_SIZE, GRID_SIZE);
                     } else if (b.t === 'cactus') {
+                        by = b.r * GRID_SIZE;
                         ctx.fillStyle = '#16a34a'; ctx.fillRect(bx + 5, by + 4, GRID_SIZE - 10, GRID_SIZE - 4);
                         ctx.fillRect(bx + 2, by + 8, 4, 6); ctx.fillRect(bx + GRID_SIZE - 6, by + 6, 4, 6);
                     }
