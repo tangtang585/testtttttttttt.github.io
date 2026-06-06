@@ -1,10 +1,9 @@
-// game all systems //
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>6-Player Dino (Network Fixed)</title>
+    <title>6-Player Dino (Fixed White Screen)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.2.2/mqtt.min.js"></script>
     <style>
         * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
@@ -28,7 +27,7 @@
 </head>
 <body>
 
-    <h1>🦖 6-Player Dino (Network Fixed)</h1>
+    <h1>🦖 6-Player Dino (White Screen Fixed)</h1>
     
     <div class="panel">
         <div>Your Room Code: <strong id="my-id" style="color:#0070f3; font-size: 1.2rem;">...</strong></div>
@@ -42,7 +41,7 @@
         <button class="btn red" id="respawnBtn" onclick="respawnMe()" style="display:none;">🔄 Respawn</button>
         <button class="btn red" id="leaveBtn" onclick="leaveMatch()" style="display:none;">🚪 Leave Match</button>
         
-        <div id="status">Connecting to gaming network...</div>
+        <div id="status">⏳ Connecting to network server (You can still play solo)...</div>
         
         <div class="cheats">
             <label><input type="checkbox" id="godMode"> 🛡️ God Mode</label>
@@ -55,7 +54,7 @@
     <div id="touch-pad">TAP TO JUMP</div>
 
     <div class="chat-container">
-        <div id="chat-log"><i>System: Connecting...</i></div>
+        <div id="chat-log"><i>System: Starting game loop...</i></div>
         <div class="chat-row">
             <input type="text" id="chat-input" placeholder="Type a message to all players..." onkeydown="if(event.key==='Enter') sendChat()">
             <button class="btn" id="chat-send" onclick="sendChat()">💬 Send</button>
@@ -71,6 +70,7 @@
 
         let currentRoom = null;
         let mqttClient = null;
+        let isServerConnected = false;
 
         const colorPalette = ['#0070f3', '#e11d48', '#16a34a', '#d97706', '#7c3aed', '#db2777'];
         let myColor = colorPalette[Math.floor(Math.random() * colorPalette.length)];
@@ -81,23 +81,88 @@
         
         let lastScoreTick = Date.now();
 
-        // FIXED: Connect to high-availability network cluster with automated reconnection parameters
-        mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
-            keepalive: 10,
-            reconnectPeriod: 1000,
-            connectTimeout: 5000
-        });
-        
-        mqttClient.on('connect', () => {
-            document.getElementById('status').innerText = "✅ Server Ready! Join a room code or match.";
-            document.getElementById('status').style.color = "#16a34a";
-            document.getElementById('chat-log').innerHTML = "<i>System: Connected to server network layer. Ready to play!</i>";
-        });
+        // FIXED: Safe wrapper initialization so game plays even if scripts are offline
+        try {
+            if (typeof mqtt !== 'undefined') {
+                mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
+                    keepalive: 10,
+                    reconnectPeriod: 2000,
+                    connectTimeout: 5000
+                });
+                
+                mqttClient.on('connect', () => {
+                    isServerConnected = true;
+                    document.getElementById('status').innerText = "✅ Server Ready! Join a room code or match.";
+                    document.getElementById('status').style.color = "#16a34a";
+                    document.getElementById('chat-log').innerHTML = "<i>System: Connected to server network layer. Ready for multiplayer!</i>";
+                });
 
-        mqttClient.on('error', () => {
-            document.getElementById('status').innerText = "❌ Network Error. Retrying...";
-            document.getElementById('status').style.color = "#dc2626";
-        });
+                mqttClient.on('error', () => {
+                    isServerConnected = false;
+                    document.getElementById('status').innerText = "⚠️ Server busy. Playing in Solo Mode.";
+                    document.getElementById('status').style.color = "#d97706";
+                });
+                
+                // Message handling setup
+                mqttClient.on('message', (topic, msg) => {
+                    if (!currentRoom) return;
+                    try {
+                        const data = JSON.parse(msg.toString());
+                        if (data.id === myShortId) return;
+
+                        if (data.type === 'chat') {
+                            appendLog(`<b style="color: ${data.color};">Player [${data.id.substring(0,4)}]:</b> ${escapeHTML(data.text)}`);
+                            return;
+                        }
+
+                        if (data.type === 'leave') {
+                            delete players[data.id];
+                            appendLog(`<i>System: Player [${data.id.substring(0,4)}] disconnected.</i>`);
+                            return;
+                        }
+
+                        if (data.type === 'update') {
+                            if (!players[data.id]) {
+                                if (Object.keys(players).length >= 5) return;
+                                appendLog(`<i>System: Player [${data.id.substring(0,4)}] joined!</i>`);
+                            }
+
+                            let activeKeys = Object.keys(players);
+                            if (!players[data.id]) activeKeys.push(data.id);
+                            activeKeys.sort();
+                            let layoutIndex = activeKeys.indexOf(data.id) + 1;
+
+                            players[data.id] = {
+                                x: 50 + (layoutIndex * 40),
+                                y: data.y,
+                                isDead: data.isDead,
+                                score: data.score,
+                                color: data.color,
+                                lastSeen: Date.now()
+                            };
+
+                            if (isHost()) {
+                                if (data.speedSync) {
+                                    document.getElementById('gameSpeed').value = data.speedSync;
+                                    cactus.speed = data.speedSync;
+                                }
+                            } else {
+                                if (data.isHostPlayer) {
+                                    cactus.x = data.cx;
+                                    cactus.speed = data.speed;
+                                    document.getElementById('gameSpeed').value = data.speed;
+                                }
+                            }
+                        }
+                    } catch (e) {}
+                });
+            } else {
+                throw new Error("MQTT library not loaded");
+            }
+        } catch(err) {
+            document.getElementById('status').innerText = "📴 Offline Mode (No Internet). Play solo!";
+            document.getElementById('status').style.color = "#7f1d1d";
+        }
 
         function joinRoomCode() {
             const targetRoom = document.getElementById('friend-code').value.trim();
@@ -110,83 +175,19 @@
         }
 
         function setupRoomChannels(roomName) {
-            if(currentRoom) {
-                mqttClient.unsubscribe('dino_royale/' + currentRoom);
-            }
+            if (!isServerConnected) return alert("Still waiting for server connection. Please try again in a few seconds.");
+            if(currentRoom) mqttClient.unsubscribe('dino_royale/' + currentRoom);
             
             currentRoom = roomName;
-            players = {}; // clear old instances
+            players = {}; 
             mqttClient.subscribe('dino_royale/' + currentRoom);
             
             document.getElementById('connection-controls').style.display = 'none';
             document.getElementById('randomBtn').style.display = 'none';
             document.getElementById('leaveBtn').style.display = 'inline-block';
             document.getElementById('status').innerText = `🎮 Active Room: ${roomName}`;
-            appendLog(`<i>System: Entered room code [${roomName}]. Waiting for sprites...</i>`);
-
-            // Broadcast entry handshake message immediately
-            setTimeout(() => {
-                sendNetworkPacket();
-            }, 200);
+            appendLog(`<i>System: Entered room code [${roomName}]. Waiting for others...</i>`);
         }
-
-        // Message Event processing engine
-        mqttClient.on('message', (topic, msg) => {
-            if (!currentRoom) return;
-            
-            try {
-                const data = JSON.parse(msg.toString());
-                if (data.id === myShortId) return; // ignore self loop payload
-
-                if (data.type === 'chat') {
-                    appendLog(`<b style="color: ${data.color};">Player [${data.id.substring(0,4)}]:</b> ${escapeHTML(data.text)}`);
-                    return;
-                }
-
-                if (data.type === 'leave') {
-                    delete players[data.id];
-                    appendLog(`<i>System: Player [${data.id.substring(0,4)}] disconnected.</i>`);
-                    return;
-                }
-
-                if (data.type === 'update') {
-                    // Update layout matrix positioning limits dynamically
-                    if (!players[data.id]) {
-                        if (Object.keys(players).length >= 5) return; // Hard structural cap: 6 total max
-                        appendLog(`<i>System: Player [${data.id.substring(0,4)}] joined!</i>`);
-                    }
-
-                    // Dynamically map x offset locations to separate players cleanly across the floor
-                    let activeKeys = Object.keys(players);
-                    if (!players[data.id]) activeKeys.push(data.id);
-                    activeKeys.sort();
-                    let layoutIndex = activeKeys.indexOf(data.id) + 1;
-
-                    players[data.id] = {
-                        x: 50 + (layoutIndex * 40),
-                        y: data.y,
-                        isDead: data.isDead,
-                        score: data.score,
-                        color: data.color,
-                        lastSeen: Date.now() // time stamp check to remove dead drops
-                    };
-
-                    // Handle Host / Client roles for matching obstacle vectors
-                    if (isHost()) {
-                        if (data.speedSync) {
-                            document.getElementById('gameSpeed').value = data.speedSync;
-                            cactus.speed = data.speedSync;
-                        }
-                    } else {
-                        if (data.isHostPlayer) {
-                            cactus.x = data.cx;
-                            cactus.speed = data.speed;
-                            document.getElementById('gameSpeed').value = data.speed;
-                        }
-                    }
-                }
-            } catch (e) {}
-        });
 
         function isHost() {
             if (!currentRoom) return true;
@@ -194,22 +195,6 @@
             activeIds.push(myShortId);
             activeIds.sort();
             return activeIds[0] === myShortId;
-        }
-
-        function sendNetworkPacket() {
-            if (currentRoom && mqttClient.connected) {
-                mqttClient.publish('dino_royale/' + currentRoom, JSON.stringify({
-                    type: 'update',
-                    id: myShortId,
-                    y: p1.y,
-                    isDead: p1.isDead,
-                    score: p1.score,
-                    color: myColor,
-                    isHostPlayer: isHost(),
-                    cx: cactus.x,
-                    speed: cactus.speed
-                }));
-            }
         }
 
         function changeSpeed(val) {
@@ -223,7 +208,7 @@
             const text = input.value.trim();
             if (!text) return;
 
-            if (currentRoom) {
+            if (currentRoom && isServerConnected) {
                 mqttClient.publish('dino_royale/' + currentRoom, JSON.stringify({ type: 'chat', id: myShortId, color: myColor, text: text }));
                 appendLog(`<b style="color: ${myColor};">You:</b> ${escapeHTML(text)}`);
                 input.value = '';
@@ -231,7 +216,7 @@
         }
 
         function leaveMatch() {
-            if (currentRoom) {
+            if (currentRoom && isServerConnected) {
                 mqttClient.publish('dino_royale/' + currentRoom, JSON.stringify({ type: 'leave', id: myShortId }));
                 mqttClient.unsubscribe('dino_royale/' + currentRoom);
             }
@@ -242,7 +227,7 @@
             document.getElementById('randomBtn').style.display = 'inline-block';
             document.getElementById('leaveBtn').style.display = 'none';
             document.getElementById('status').innerText = "✅ Server Ready! Join a room code or match.";
-            appendLog("<i>System: You left the match room.</i>");
+            appendLog("<i>System: You left the room.</i>");
         }
 
         function appendLog(htmlContent) {
@@ -304,7 +289,6 @@
                 }
             }
 
-            // Host runs obstacle mechanics
             if (isHost()) {
                 let targetSpeed = parseFloat(document.getElementById('gameSpeed').value) || 5;
                 if(cactus.speed !== targetSpeed && !p1.isDead) {
@@ -320,18 +304,59 @@
                 }
             }
 
-            // Clean up players who closed their browser without clicking leave (timeout > 4 seconds)
+            // Cleanup missing players
             let now = Date.now();
             Object.keys(players).forEach(id => {
-                if (now - players[id].lastSeen > 4000) {
-                    delete players[id];
-                }
+                if (now - players[id].lastSeen > 4000) delete players[id];
             });
 
-            // Stream state packages outward
-            sendNetworkPacket();
+            // Network broadcast
+            if (currentRoom && isServerConnected) {
+                mqttClient.publish('dino_royale/' + currentRoom, JSON.stringify({
+                    type: 'update',
+                    id: myShortId,
+                    y: p1.y,
+                    isDead: p1.isDead,
+                    score: p1.score,
+                    color: myColor,
+                    isHostPlayer: isHost(),
+                    cx: cactus.x,
+                    speed: cactus.speed
+                }));
+            }
 
-            // RENDER SCREEN
+            // RENDERING CANVAS (Will now run instantly!)
             ctx.clearRect(0, 0, 600, 150);
             ctx.fillStyle = '#6b7280'; ctx.fillRect(0, 135, 600, 2); // Ground
             
+            // Draw Player 1
+            ctx.fillStyle = p1.isDead ? '#9ca3af' : p1.color; 
+            ctx.fillRect(p1.x, p1.y, 25, 25); 
+
+            // Draw Others
+            Object.keys(players).forEach(id => {
+                let opp = players[id];
+                ctx.fillStyle = opp.isDead ? '#d1d5db' : opp.color;
+                ctx.fillRect(opp.x, opp.y, 25, 25);
+            });
+            
+            // Draw Cactus
+            ctx.fillStyle = '#15803d'; ctx.fillRect(cactus.x, cactus.y, cactus.width, cactus.height); 
+            
+            // Scores
+            ctx.fillStyle = '#374151'; 
+            ctx.font = 'bold 11px sans-serif'; 
+            let scoreString = `You: ${p1.score}`;
+            Object.keys(players).forEach(id => {
+                scoreString += `  |  [${id.substring(0,3)}]: ${players[id].score}`;
+            });
+            ctx.fillText(scoreString, 10, 20);
+
+            requestAnimationFrame(loop);
+        }
+        
+        // Kick off the visual graphics engine immediately
+        loop();
+    </script>
+</body>
+</html>
