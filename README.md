@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>6-Player Dino Arena (Name Saved)</title>
+    <title>6-Player Dino Arena</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.2.2/mqtt.min.js"></script>
     <style>
         * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
@@ -75,16 +75,14 @@
         const myShortId = Math.floor(10000 + Math.random() * 90000).toString();
         document.getElementById('my-id').innerText = myShortId;
 
-        // NEW: Check if a saved name already exists inside storage memory
+        // Load name safely
         let savedName = localStorage.getItem('dino_saved_name');
         if (savedName) {
             document.getElementById('username-input').value = savedName;
         } else {
-            // Default random backup title if storage is empty
             document.getElementById('username-input').value = "Player_" + myShortId.substring(0,3);
         }
 
-        // NEW: Function running every time you type to store data permanently
         function saveMyName(val) {
             let cleanName = val.trim();
             if(cleanName) {
@@ -99,7 +97,8 @@
         const colorPalette = ['#0070f3', '#e11d48', '#16a34a', '#d97706', '#7c3aed', '#db2777'];
         let myColor = colorPalette[Math.floor(Math.random() * colorPalette.length)];
 
-        let p1 = { id: myShortId, name: "", x: 40, y: 110, vy: 0, isJumping: false, isDead: false, color: myColor, score: 0 }; 
+        // Fixed p1 layout safely
+        let p1 = { id: myShortId, x: 40, y: 110, vy: 0, isJumping: false, isDead: false, color: myColor, score: 0 }; 
         let players = {}; 
         let cactus = { x: 600, y: 115, width: 15, height: 20, speed: 5 };
         
@@ -117,7 +116,7 @@
                     isServerConnected = true;
                     document.getElementById('status').innerText = "✅ Network Connected! Ready.";
                     document.getElementById('status').style.color = "#16a34a";
-                    setupRoomChannels(myShortId); // auto host your own room
+                    setupRoomChannels(myShortId);
                 });
 
                 mqttClient.on('message', (topic, msg) => {
@@ -146,5 +145,204 @@
 
                             let activeKeys = Object.keys(players);
                             if (!players[data.id]) activeKeys.push(data.id);
-                            activeKeys.push(myShortId
-                            
+                            activeKeys.push(myShortId);
+                            activeKeys.sort();
+
+                            p1.x = 40 + (activeKeys.indexOf(myShortId) * 45);
+                            let layoutIndex = activeKeys.indexOf(data.id);
+
+                            players[data.id] = {
+                                x: 40 + (layoutIndex * 45),
+                                y: data.y,
+                                isDead: data.isDead,
+                                score: data.score,
+                                color: data.color,
+                                name: data.name,
+                                lastSeen: Date.now()
+                            };
+
+                            updateLobbyCount();
+
+                            if (isHost()) {
+                                if (data.speedSync) {
+                                    cactus.speed = data.speedSync;
+                                    document.getElementById('gameSpeed').value = data.speedSync;
+                                }
+                            } else {
+                                if (data.isHostPlayer) {
+                                    cactus.x = data.cx;
+                                    cactus.speed = data.speed;
+                                    document.getElementById('gameSpeed').value = data.speed;
+                                }
+                            }
+                        }
+                    } catch (e) {}
+                });
+            }
+        } catch(err) {}
+
+        function updateLobbyCount() {
+            let total = Object.keys(players).length + 1;
+            document.getElementById('lobby-count').innerText = `👥 Players on screen: ${total} / 6`;
+        }
+
+        function joinRoomCode() {
+            const targetRoom = document.getElementById('friend-code').value.trim();
+            if (!targetRoom) return alert("Type your friend's room ID first!");
+            setupRoomChannels(targetRoom);
+        }
+
+        function setupRoomChannels(roomName) {
+            if (!isServerConnected) return alert("Network layer connecting, wait a second.");
+            
+            if (currentRoom) {
+                mqttClient.publish('dino_arena/' + currentRoom, JSON.stringify({ type: 'leave', id: myShortId }));
+                mqttClient.unsubscribe('dino_arena/' + currentRoom);
+            }
+            
+            currentRoom = roomName;
+            players = {}; 
+            p1.x = 40; p1.score = 0; p1.isDead = false;
+            document.getElementById('respawnBtn').style.display = 'none';
+            
+            mqttClient.subscribe('dino_arena/' + currentRoom);
+            
+            if (currentRoom === myShortId) {
+                document.getElementById('connection-controls').style.display = 'flex';
+                document.getElementById('leaveBtn').style.display = 'none';
+                document.getElementById('status').innerText = `🏠 Hosting Room: ${currentRoom}`;
+            } else {
+                document.getElementById('connection-controls').style.display = 'none';
+                document.getElementById('leaveBtn').style.display = 'inline-block';
+                document.getElementById('status').innerText = `🔗 Connected to Room: ${currentRoom}`;
+            }
+            
+            updateLobbyCount();
+            appendLog(`<i>System: Switch room channel to [${roomName}]. Connecting...</i>`);
+        }
+
+        function isHost() {
+            if (!currentRoom) return true;
+            let activeIds = Object.keys(players);
+            activeIds.push(myShortId);
+            activeIds.sort();
+            return activeIds[0] === myShortId;
+        }
+
+        function changeSpeed(val) {
+            let num = parseFloat(val);
+            if (isNaN(num) || num < 1) num = 1;
+            cactus.speed = num;
+        }
+
+        function sendChat() {
+            const input = document.getElementById('chat-input');
+            const text = input.value.trim();
+            const uName = document.getElementById('username-input').value.trim() || "Player";
+            if (!text) return;
+
+            if (currentRoom && isServerConnected) {
+                mqttClient.publish('dino_arena/' + currentRoom, JSON.stringify({ type: 'chat', id: myShortId, name: uName, color: myColor, text: text }));
+                appendLog(`<b style="color: ${myColor};">You:</b> ${escapeHTML(text)}`);
+                input.value = '';
+            }
+        }
+
+        function leaveMatch() {
+            setupRoomChannels(myShortId);
+        }
+
+        function appendLog(htmlContent) {
+            const log = document.getElementById('chat-log');
+            log.innerHTML += "<div>" + htmlContent + "</div>";
+            log.scrollTop = log.scrollHeight; 
+        }
+
+        function escapeHTML(str) {
+            return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        function jump() {
+            if (!p1.isDead) {
+                if (document.getElementById('infJump').checked || !p1.isJumping) {
+                    p1.vy = -10; p1.isJumping = true;
+                }
+            }
+        }
+        
+        window.addEventListener('keydown', e => { 
+            if(document.activeElement.tagName === 'INPUT') return;
+            if(e.code === 'Space') jump(); 
+        });
+        document.getElementById('touch-pad').addEventListener('touchstart', (e) => { e.preventDefault(); jump(); });
+        document.getElementById('touch-pad').addEventListener('mousedown', jump);
+
+        function respawnMe() {
+            p1.isDead = false; p1.y = 110; p1.vy = 0; p1.isJumping = false; p1.score = 0;            
+            lastScoreTick = Date.now(); 
+            document.getElementById('respawnBtn').style.display = 'none';
+            if (isHost()) { cactus.x = 600; cactus.speed = parseFloat(document.getElementById('gameSpeed').value) || 5; }
+        }
+
+        function loop() {
+            const currentNameSetting = document.getElementById('username-input').value.trim() || "Player";
+            
+            p1.vy += 0.6; p1.y += p1.vy;
+            if (p1.y > 110) { p1.y = 110; p1.vy = 0; p1.isJumping = false; }
+
+            if (!p1.isDead) {
+                if (p1.x < cactus.x + cactus.width && p1.x + 25 > cactus.x &&
+                    p1.y < cactus.y + cactus.height && p1.y + 25 > cactus.y && 
+                    !document.getElementById('godMode').checked) {
+                        p1.isDead = true;
+                        document.getElementById('respawnBtn').style.display = 'inline-block';
+                }
+                let currentTime = Date.now();
+                if (currentTime - lastScoreTick >= 100) { p1.score++; lastScoreTick = currentTime; }
+            }
+
+            if (isHost()) {
+                let targetSpeed = parseFloat(document.getElementById('gameSpeed').value) || 5;
+                if(cactus.speed !== targetSpeed && !p1.isDead) cactus.speed = targetSpeed;
+                cactus.x -= cactus.speed;
+                if (cactus.x < -20) { 
+                    cactus.x = 600; 
+                    let currentSetting = parseFloat(document.getElementById('gameSpeed').value) || 5;
+                    document.getElementById('gameSpeed').value = (currentSetting + 0.2).toFixed(1);
+                    changeSpeed(document.getElementById('gameSpeed').value);
+                }
+            }
+
+            let now = Date.now();
+            Object.keys(players).forEach(id => { if (now - players[id].lastSeen > 3000) { delete players[id]; updateLobbyCount(); } });
+
+            if (currentRoom && isServerConnected) {
+                mqttClient.publish('dino_arena/' + currentRoom, JSON.stringify({
+                    type: 'update', id: myShortId, name: currentNameSetting, y: p1.y, isDead: p1.isDead, score: p1.score, color: myColor, isHostPlayer: isHost(), cx: cactus.x, speed: cactus.speed
+                }));
+            }
+
+            ctx.clearRect(0, 0, 600, 150);
+            ctx.fillStyle = '#6b7280'; ctx.fillRect(0, 135, 600, 2); 
+            
+            ctx.fillStyle = p1.isDead ? '#9ca3af' : p1.color; ctx.fillRect(p1.x, p1.y, 25, 25); 
+            ctx.fillStyle = '#374151'; ctx.font = '10px sans-serif'; ctx.fillText(currentNameSetting, p1.x - 5, p1.y - 8);
+
+            Object.keys(players).forEach(id => {
+                let opp = players[id];
+                ctx.fillStyle = opp.isDead ? '#d1d5db' : opp.color; ctx.fillRect(opp.x, opp.y, 25, 25);
+                ctx.fillStyle = '#374151'; ctx.fillText(opp.name, opp.x - 5, opp.y - 8);
+            });
+            
+            ctx.fillStyle = '#15803d'; ctx.fillRect(cactus.x, cactus.y, cactus.width, cactus.height); 
+            ctx.fillStyle = '#374151'; ctx.font = 'bold 11px sans-serif'; 
+            let scoreString = `${currentNameSetting}: ${p1.score}`;
+            Object.keys(players).forEach(id => { scoreString += `  |  ${players[id].name}: ${players[id].score}`; });
+            ctx.fillText(scoreString, 10, 20);
+
+            requestAnimationFrame(loop);
+        }
+        loop();
+    </script>
+</body>
+</html>
