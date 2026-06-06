@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>6-Player Dino Arena (Video Maps & Image Costumes)</title>
+    <title>6-Player Dino Arena (Mobile Video Fix)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.2.2/mqtt.min.js"></script>
     <style>
         * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
         body { font-family: sans-serif; text-align: center; background: #f0f2f5; margin: 0; padding: 10px; }
-        canvas { background: white; border: 2px solid #333; border-radius: 6px; display: block; margin: 10px auto; width: 100%; max-width: 600px; height: auto; cursor: default; }
+        canvas { background: #ffffff; border: 2px solid #333; border-radius: 6px; display: block; margin: 10px auto; width: 100%; max-width: 600px; height: auto; cursor: default; }
         .panel { background: white; padding: 15px; border-radius: 8px; max-width: 600px; margin: 0 auto 10px auto; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         .btn { padding: 12px 15px; font-size: 14px; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; color: white; margin: 5px; }
         .blue { background: #0070f3; } .green { background: #16a34a; } .red { background: #dc2626; } .orange { background: #ea580c; }
@@ -133,7 +133,6 @@
         const colorPalette = ['#0070f3', '#e11d48', '#16a34a', '#d97706', '#7c3aed', '#db2777'];
         let myColor = colorPalette[Math.floor(Math.random() * colorPalette.length)];
 
-        // Extended Player entity to store costume resources and asset states
         let p1 = { id: myShortId, x: 40, y: 110, vy: 0, isJumping: false, isDead: false, color: myColor, score: 0, costume: 'none', assetUrl: '', customElement: null, isVideoAsset: false }; 
         let players = {}; 
         let cactus = { x: 600, y: 115, width: 15, height: 20, speed: 5 };
@@ -143,13 +142,11 @@
         let mapBlocks = []; 
         const GRID_SIZE = 25; 
 
-        // Video Map variables
         let bgVideoElement = null; 
         let currentMapVideoUrl = '';
-
         let lastScoreTick = Date.now();
 
-        // Background Media Wallpaper Loader
+        // Safe Video Wallpaper Loader
         function loadMapVideoWallpaper(url) {
             const cleanUrl = url.trim();
             currentMapVideoUrl = cleanUrl;
@@ -157,13 +154,22 @@
                 bgVideoElement = null;
                 return;
             }
-            bgVideoElement = document.createElement('video');
-            bgVideoElement.src = cleanUrl;
-            bgVideoElement.crossOrigin = "anonymous";
-            bgVideoElement.loop = true;
-            bgVideoElement.muted = true;
-            bgVideoElement.playsInline = true;
-            bgVideoElement.play().catch(e => console.log("Video map initialization waiting for interaction..."));
+            try {
+                bgVideoElement = document.createElement('video');
+                bgVideoElement.src = cleanUrl;
+                bgVideoElement.crossOrigin = "anonymous";
+                bgVideoElement.loop = true;
+                bgVideoElement.muted = true;
+                bgVideoElement.playsInline = true;
+                // Avoid breaking if user hasn't interacted yet
+                let playPromise = bgVideoElement.play();
+                if (playPromise !== undefined) {
+                    playPromise.catch(e => console.log("Video background waiting for gesture..."));
+                }
+            } catch(e) {
+                console.log("CORS background error caught safely.");
+                bgVideoElement = null;
+            }
         }
 
         function changeCostumePreset(val) {
@@ -176,7 +182,6 @@
             }
         }
 
-        // Custom Asset handler (Images or MP4 clips)
         function loadCustomCostumeAsset(url) {
             const cleanUrl = url.trim();
             if(!cleanUrl) {
@@ -187,37 +192,46 @@
             p1.assetUrl = cleanUrl;
             p1.isVideoAsset = cleanUrl.toLowerCase().endsWith('.mp4');
 
-            if(p1.isVideoAsset) {
-                p1.customElement = document.createElement('video');
-                p1.customElement.src = cleanUrl;
-                p1.customElement.crossOrigin = "anonymous";
-                p1.customElement.loop = true;
-                p1.customElement.muted = true;
-                p1.customElement.playsInline = true;
-                p1.customElement.play().catch(e => {});
-            } else {
-                p1.customElement = new Image();
-                p1.customElement.src = cleanUrl;
-                p1.customElement.crossOrigin = "anonymous";
+            try {
+                if(p1.isVideoAsset) {
+                    p1.customElement = document.createElement('video');
+                    p1.customElement.src = cleanUrl;
+                    p1.customElement.crossOrigin = "anonymous";
+                    p1.customElement.loop = true;
+                    p1.customElement.muted = true;
+                    p1.customElement.playsInline = true;
+                    let p = p1.customElement.play();
+                    if(p !== undefined) p.catch(e => {});
+                } else {
+                    p1.customElement = new Image();
+                    p1.customElement.src = cleanUrl;
+                    p1.customElement.crossOrigin = "anonymous";
+                }
+            } catch(e) {
+                p1.customElement = null;
             }
         }
 
-        // Helper to instantly load network textures for remote connection lists
         function verifyOpponentAsset(opp) {
             if (opp.costume === 'custom' && opp.assetUrl && !opp.customElement) {
-                const isVid = opp.assetUrl.toLowerCase().endsWith('.mp4');
-                if(isVid) {
-                    opp.customElement = document.createElement('video');
-                    opp.customElement.src = opp.assetUrl;
-                    opp.customElement.crossOrigin = "anonymous";
-                    opp.customElement.loop = true;
-                    opp.customElement.muted = true;
-                    opp.customElement.playsInline = true;
-                    opp.customElement.play().catch(e => {});
-                } else {
-                    opp.customElement = new Image();
-                    opp.customElement.src = opp.assetUrl;
-                    opp.customElement.crossOrigin = "anonymous";
+                try {
+                    const isVid = opp.assetUrl.toLowerCase().endsWith('.mp4');
+                    if(isVid) {
+                        opp.customElement = document.createElement('video');
+                        opp.customElement.src = opp.assetUrl;
+                        opp.customElement.crossOrigin = "anonymous";
+                        opp.customElement.loop = true;
+                        opp.customElement.muted = true;
+                        opp.customElement.playsInline = true;
+                        let p = opp.customElement.play();
+                        if(p !== undefined) p.catch(e => {});
+                    } else {
+                        opp.customElement = new Image();
+                        opp.customElement.src = opp.assetUrl;
+                        opp.customElement.crossOrigin = "anonymous";
+                    }
+                } catch(e) {
+                    opp.customElement = null;
                 }
             }
         }
@@ -281,7 +295,6 @@
                             p1.x = 40 + (activeKeys.indexOf(myShortId) * 45);
                             let layoutIndex = activeKeys.indexOf(data.id);
 
-                            // Cache or update texture references safely
                             const prevElement = (players[data.id] && players[data.id].assetUrl === data.assetUrl) ? players[data.id].customElement : null;
 
                             players[data.id] = {
@@ -379,10 +392,4 @@
             if(!isBuildMode) return;
             const rect = canvas.getBoundingClientRect();
             const scaleX = canvas.width / rect.width; const scaleY = canvas.height / rect.height;
-            const clickX = (e.clientX - rect.left) * scaleX; const clickY = (e.clientY - rect.top) * scaleY;
-            const col = Math.floor(clickX / GRID_SIZE); const row = Math.floor(clickY / GRID_SIZE);
-
-            if(col < 3 && row > 3) return;
-            const existingIndex = mapBlocks.findIndex(b => b.r === row && b.c === col);
-            if(existingIndex > -1) mapBlocks.splice(existingIndex, 1);
-            else mapBlocks.push({ r: row, c: col, t
+      
