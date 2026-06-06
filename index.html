@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>6-Player Dino Arena (Moving Map Edition)</title>
+    <title>6-Player Dino Arena (Forced Scrolling Fixed)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.2.2/mqtt.min.js"></script>
     <style>
         * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
@@ -169,7 +169,7 @@
         let mapBlocks = []; 
         const GRID_SIZE = 25; 
 
-        // WORLD SCROLL OFFSET ENGINE
+        // WORLD OFFSET INDEPENDENT OF NETWORK HOST
         let worldXOffset = 0; 
 
         let bgVideoElement = null; 
@@ -333,14 +333,16 @@
         function loadPresetMap(mapType) {
             if(!mapType) return;
             mapBlocks = []; 
+            // Normalize layout columns using current local offsets so presets spawn instantly visible
+            let baseln = Math.floor(worldXOffset / GRID_SIZE);
             if(mapType === 'gauntlet') {
-                mapBlocks.push({r: 5, c: 8, t: 'brick'}, {r: 5, c: 9, t: 'brick'});
-                mapBlocks.push({r: 4, c: 13, t: 'brick'}, {r: 5, c: 13, t: 'cactus'});
-                mapBlocks.push({r: 5, c: 17, t: 'cactus'}, {r: 5, c: 20, t: 'brick'});
+                mapBlocks.push({r: 5, c: baseln + 8, t: 'brick'}, {r: 5, c: baseln + 9, t: 'brick'});
+                mapBlocks.push({r: 4, c: baseln + 13, t: 'brick'}, {r: 5, c: baseln + 13, t: 'cactus'});
+                mapBlocks.push({r: 5, c: baseln + 17, t: 'cactus'}, {r: 5, c: baseln + 20, t: 'brick'});
             } else if (mapType === 'tower') {
-                mapBlocks.push({r: 5, c: 6, t: 'brick'}, {r: 4, c: 9, t: 'brick'});
-                mapBlocks.push({r: 3, c: 12, t: 'brick'}, {r: 2, c: 15, t: 'brick'});
-                mapBlocks.push({r: 3, c: 18, t: 'brick'}, {r: 5, c: 21, t: 'brick'});
+                mapBlocks.push({r: 5, c: baseln + 6, t: 'brick'}, {r: 4, c: baseln + 9, t: 'brick'});
+                mapBlocks.push({r: 3, c: baseln + 12, t: 'brick'}, {r: 2, c: baseln + 15, t: 'brick'});
+                mapBlocks.push({r: 3, c: baseln + 18, t: 'brick'}, {r: 5, c: baseln + 21, t: 'brick'});
             }
             broadcastBlocks();
             document.getElementById('map-select').value = ""; 
@@ -412,7 +414,6 @@
                             } else {
                                 if (data.isHostPlayer) {
                                     cactus.x = data.cx; cactus.speed = data.speed;
-                                    if(data.wx !== undefined) worldXOffset = data.wx; // Sync host world offset
                                 }
                             }
                         }
@@ -489,12 +490,11 @@
             const scaleX = canvas.width / rect.width; const scaleY = canvas.height / rect.height;
             const clickX = (e.clientX - rect.left) * scaleX; const clickY = (e.clientY - rect.top) * scaleY;
             
-            // Factor in world offset rotation so clicked block anchors down into the actual moving layout grid!
             const targetWorldX = clickX + worldXOffset;
             const col = Math.floor(targetWorldX / GRID_SIZE); 
             const row = Math.floor(clickY / GRID_SIZE);
 
-            if(clickX < 100 && row > 3) return; // Prevent trapping spawn points
+            if(clickX < 80 && row > 3) return; 
             const existingIndex = mapBlocks.findIndex(b => b.r === row && b.c === col);
             if(existingIndex > -1) mapBlocks.splice(existingIndex, 1);
             else mapBlocks.push({ r: row, c: col, t: selectedTool });
@@ -582,18 +582,17 @@
                 if (!isBuildMode) { p1.vy += 0.6; p1.y += p1.vy; }
                 if (p1.y > 110) { p1.y = 110; p1.vy = 0; p1.isJumping = false; }
 
-                // Map Translation and Scrolling Logic Control
-                if (isHost() && !isBuildMode && !p1.isDead) {
-                    worldXOffset += cactus.speed;
+                // FIXED: Force world offset to move forward locally whenever game is running and dino is alive!
+                if (!isBuildMode && !p1.isDead) {
+                    let runSpeed = parseFloat(document.getElementById('gameSpeed').value) || 5;
+                    worldXOffset += runSpeed;
                 }
 
                 mapBlocks.forEach(b => {
-                    // Convert the absolute world column tracking data to actual real-time screen pixels
                     let bx = (b.c * GRID_SIZE) - worldXOffset;
                     
-                    // Seamless layout wrapper: If block slides fully left, it wraps around endlessly to right!
-                    while (bx < -GRID_SIZE) { bx += 800; } 
-                    
+                    // Endless looping map translation engine
+                    while (bx < -GRID_SIZE) { bx += 700; } 
                     let by = b.r * GRID_SIZE;
 
                     if (p1.x + 25 > bx && p1.x < bx + GRID_SIZE) {
@@ -632,6 +631,10 @@
                         document.getElementById('gameSpeed').value = (currentSetting + 0.2).toFixed(1);
                         changeSpeed(document.getElementById('gameSpeed').value);
                     }
+                } else if (!isHost() && !isBuildMode) {
+                    // If playing as guest, pull the floating standalone green cactus forward at local speeds too
+                    cactus.x -= (parseFloat(document.getElementById('gameSpeed').value) || 5);
+                    if (cactus.x < -20) cactus.x = 600;
                 }
 
                 let now = Date.now();
@@ -639,7 +642,7 @@
 
                 if (currentRoom && isServerConnected) {
                     mqttClient.publish('dino_arena/' + currentRoom, JSON.stringify({
-                        type: 'update', id: myShortId, name: currentNameSetting, y: p1.y, isDead: p1.isDead, score: p1.score, color: myColor, costume: p1.costume, assetUrl: (p1.assetUrl === 'local_blob' ? '' : p1.assetUrl), isHostPlayer: isHost(), cx: cactus.x, speed: cactus.speed, wx: worldXOffset
+                        type: 'update', id: myShortId, name: currentNameSetting, y: p1.y, isDead: p1.isDead, score: p1.score, color: myColor, costume: p1.costume, assetUrl: (p1.assetUrl === 'local_blob' ? '' : p1.assetUrl), isHostPlayer: isHost(), cx: cactus.x, speed: cactus.speed
                     }));
                 }
 
@@ -660,10 +663,9 @@
 
                 ctx.fillStyle = '#6b7280'; ctx.fillRect(0, 135, 600, 2); 
                 
-                // Draw Blocks dynamically with offset calculations applied
                 mapBlocks.forEach(b => {
                     let bx = (b.c * GRID_SIZE) - worldXOffset;
-                    while (bx < -GRID_SIZE) { bx += 800; } 
+                    while (bx < -GRID_SIZE) { bx += 700; } 
 
                     if (b.t === 'brick' || b.t === undefined) {
                         ctx.fillStyle = "#b45309"; ctx.fillRect(bx, by = b.r * GRID_SIZE, GRID_SIZE, GRID_SIZE);
