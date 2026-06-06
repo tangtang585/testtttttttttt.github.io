@@ -3,21 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>6-Player Dino Arena</title>
+    <title>6-Player Dino Arena (Video Maps & Image Costumes)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.2.2/mqtt.min.js"></script>
     <style>
         * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
         body { font-family: sans-serif; text-align: center; background: #f0f2f5; margin: 0; padding: 10px; }
-        canvas { background: white; border: 2px solid #333; border-radius: 6px; display: block; margin: 10px auto; width: 100%; max-width: 600px; height: auto; }
+        canvas { background: white; border: 2px solid #333; border-radius: 6px; display: block; margin: 10px auto; width: 100%; max-width: 600px; height: auto; cursor: default; }
         .panel { background: white; padding: 15px; border-radius: 8px; max-width: 600px; margin: 0 auto 10px auto; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         .btn { padding: 12px 15px; font-size: 14px; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; color: white; margin: 5px; }
-        .blue { background: #0070f3; } .green { background: #16a34a; } .red { background: #dc2626; }
-        input[type="text"], input[type="number"] { padding: 11px; font-size: 14px; width: 50%; max-width: 180px; text-align: center; border: 1px solid #ccc; border-radius: 4px; margin-right: 5px; user-select: text; -webkit-user-select: text; }
+        .blue { background: #0070f3; } .green { background: #16a34a; } .red { background: #dc2626; } .orange { background: #ea580c; }
+        input[type="text"], input[type="number"], select { padding: 11px; font-size: 14px; width: 90%; max-width: 240px; text-align: center; border: 1px solid #ccc; border-radius: 4px; margin: 5px 2px; user-select: text; -webkit-user-select: text; }
         #username-input { width: 80%; max-width: 200px; margin-bottom: 10px; font-weight: bold; border: 2px solid #0070f3; }
         #touch-pad { background: #222; color: white; width: 100%; max-width: 600px; margin: 10px auto; padding: 25px; font-size: 1.2rem; font-weight: bold; border-radius: 8px; touch-action: manipulation; }
         #status { font-weight: bold; color: #d97706; margin: 8px 0; }
         #lobby-count { font-size: 1.1rem; color: #7c3aed; font-weight: bold; margin: 5px 0; }
-        .row { margin: 10px 0; display: flex; justify-content: center; align-items: center; }
+        .row { margin: 10px 0; display: flex; justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .group { border: 1px solid #e5e7eb; padding: 10px; border-radius: 6px; margin: 5px; background: #fafafa; }
         .cheats { margin-top: 8px; display: flex; gap: 15px; justify-content: center; align-items: center; font-size: 0.9rem; flex-wrap: wrap; }
         #gameSpeed { width: 60px; padding: 6px; margin-left: 4px; text-align: center; display: inline-block; }
         .chat-container { background: white; border-radius: 8px; max-width: 600px; margin: 10px auto; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: left; }
@@ -25,6 +26,9 @@
         .chat-row { display: flex; }
         #chat-input { flex-grow: 1; padding: 10px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px 0 0 4px; text-align: left; max-width: none; }
         #chat-send { border-radius: 0 4px 4px 0; margin: 0; padding: 10px 15px; background: #374151; }
+        #build-tools { display: none; margin-top: 5px; font-weight: bold; background: #f3f4f6; padding: 8px; border-radius: 6px; border: 1px dashed #ccc; }
+        .tool-select { cursor: pointer; padding: 5px 10px; border-radius: 4px; display: inline-block; margin: 0 5px; }
+        .active-tool { background: #3b82f6; color: white; }
     </style>
 </head>
 <body>
@@ -32,13 +36,48 @@
     <h1>🦖 6-Player Dino Arena</h1>
     
     <div class="panel">
-        <div>
-            <label style="font-weight: bold; display: block; margin-bottom: 3px;">✍️ Your Name (Autosaved):</label>
-            <input type="text" id="username-input" placeholder="Your Name" maxlength="12" oninput="saveMyName(this.value)">
+        <div class="row">
+            <div class="group">
+                <label style="font-weight: bold; display: block; margin-bottom: 3px;">✍️ Profile Name:</label>
+                <input type="text" id="username-input" placeholder="Your Name" maxlength="12" oninput="saveMyName(this.value)">
+            </div>
+            
+            <div class="group">
+                <label style="font-weight: bold; display: block; margin-bottom: 3px;">🎭 Costume Engine:</label>
+                <select id="costume-select" onchange="changeCostumePreset(this.value)">
+                    <option value="none">Standard Dino</option>
+                    <option value="ninja">Ninja Mask</option>
+                    <option value="king">Crown King</option>
+                    <option value="space">Astronaut</option>
+                    <option value="custom">-- Use Custom URL Below --</option>
+                </select>
+                <input type="text" id="custom-costume-url" placeholder="Paste Image/Video (.mp4) URL" oninput="loadCustomCostumeAsset(this.value)">
+            </div>
         </div>
+
         <div>Your Room ID: <strong id="my-id" style="color:#0070f3; font-size: 1.2rem;">...</strong></div>
-        
         <div id="lobby-count">👥 Players on screen: 1 / 6</div>
+
+        <div class="row">
+            <button class="btn orange" id="buildModeBtn" onclick="toggleBuildMode()">🧱 Build Mode: OFF</button>
+            
+            <div class="group" style="display:inline-block; text-align:center;">
+                <label style="font-weight: bold; display:block; margin-bottom:3px;">📹 Video Map URL Wallpaper:</label>
+                <input type="text" id="map-video-url" placeholder="Paste background loop .mp4 URL" oninput="loadMapVideoWallpaper(this.value)">
+                <select id="map-select" onchange="loadPresetMap(this.value)" style="width:auto; padding:6px; margin-top:5px;">
+                    <option value="">-- Layout Presets --</option>
+                    <option value="flat">Flat Field (Clear)</option>
+                    <option value="gauntlet">The Gauntlet 🌵</option>
+                    <option value="tower">High-Rise Tower 🧱</option>
+                </select>
+            </div>
+        </div>
+
+        <div id="build-tools">
+            <span>Select Item:</span>
+            <div id="tool-brick" class="tool-select active-tool" onclick="setBuildTool('brick')">🧱 Brick Block</div>
+            <div id="tool-cactus" class="tool-select" onclick="setBuildTool('cactus')">🌵 Cactus Hazard</div>
+        </div>
 
         <div class="row" id="connection-controls">
             <input type="text" id="friend-code" placeholder="Enter Friend's ID">
@@ -75,7 +114,6 @@
         const myShortId = Math.floor(10000 + Math.random() * 90000).toString();
         document.getElementById('my-id').innerText = myShortId;
 
-        // Load name safely
         let savedName = localStorage.getItem('dino_saved_name');
         if (savedName) {
             document.getElementById('username-input').value = savedName;
@@ -85,9 +123,7 @@
 
         function saveMyName(val) {
             let cleanName = val.trim();
-            if(cleanName) {
-                localStorage.setItem('dino_saved_name', cleanName);
-            }
+            if(cleanName) localStorage.setItem('dino_saved_name', cleanName);
         }
 
         let currentRoom = null;
@@ -97,19 +133,115 @@
         const colorPalette = ['#0070f3', '#e11d48', '#16a34a', '#d97706', '#7c3aed', '#db2777'];
         let myColor = colorPalette[Math.floor(Math.random() * colorPalette.length)];
 
-        // Fixed p1 layout safely
-        let p1 = { id: myShortId, x: 40, y: 110, vy: 0, isJumping: false, isDead: false, color: myColor, score: 0 }; 
+        // Extended Player entity to store costume resources and asset states
+        let p1 = { id: myShortId, x: 40, y: 110, vy: 0, isJumping: false, isDead: false, color: myColor, score: 0, costume: 'none', assetUrl: '', customElement: null, isVideoAsset: false }; 
         let players = {}; 
         let cactus = { x: 600, y: 115, width: 15, height: 20, speed: 5 };
         
+        let isBuildMode = false;
+        let selectedTool = 'brick'; 
+        let mapBlocks = []; 
+        const GRID_SIZE = 25; 
+
+        // Video Map variables
+        let bgVideoElement = null; 
+        let currentMapVideoUrl = '';
+
         let lastScoreTick = Date.now();
+
+        // Background Media Wallpaper Loader
+        function loadMapVideoWallpaper(url) {
+            const cleanUrl = url.trim();
+            currentMapVideoUrl = cleanUrl;
+            if(!cleanUrl) {
+                bgVideoElement = null;
+                return;
+            }
+            bgVideoElement = document.createElement('video');
+            bgVideoElement.src = cleanUrl;
+            bgVideoElement.crossOrigin = "anonymous";
+            bgVideoElement.loop = true;
+            bgVideoElement.muted = true;
+            bgVideoElement.playsInline = true;
+            bgVideoElement.play().catch(e => console.log("Video map initialization waiting for interaction..."));
+        }
+
+        function changeCostumePreset(val) {
+            p1.costume = val;
+            if(val !== 'custom') {
+                p1.assetUrl = '';
+                p1.customElement = null;
+            } else {
+                loadCustomCostumeAsset(document.getElementById('custom-costume-url').value);
+            }
+        }
+
+        // Custom Asset handler (Images or MP4 clips)
+        function loadCustomCostumeAsset(url) {
+            const cleanUrl = url.trim();
+            if(!cleanUrl) {
+                p1.customElement = null;
+                return;
+            }
+            p1.costume = 'custom';
+            p1.assetUrl = cleanUrl;
+            p1.isVideoAsset = cleanUrl.toLowerCase().endsWith('.mp4');
+
+            if(p1.isVideoAsset) {
+                p1.customElement = document.createElement('video');
+                p1.customElement.src = cleanUrl;
+                p1.customElement.crossOrigin = "anonymous";
+                p1.customElement.loop = true;
+                p1.customElement.muted = true;
+                p1.customElement.playsInline = true;
+                p1.customElement.play().catch(e => {});
+            } else {
+                p1.customElement = new Image();
+                p1.customElement.src = cleanUrl;
+                p1.customElement.crossOrigin = "anonymous";
+            }
+        }
+
+        // Helper to instantly load network textures for remote connection lists
+        function verifyOpponentAsset(opp) {
+            if (opp.costume === 'custom' && opp.assetUrl && !opp.customElement) {
+                const isVid = opp.assetUrl.toLowerCase().endsWith('.mp4');
+                if(isVid) {
+                    opp.customElement = document.createElement('video');
+                    opp.customElement.src = opp.assetUrl;
+                    opp.customElement.crossOrigin = "anonymous";
+                    opp.customElement.loop = true;
+                    opp.customElement.muted = true;
+                    opp.customElement.playsInline = true;
+                    opp.customElement.play().catch(e => {});
+                } else {
+                    opp.customElement = new Image();
+                    opp.customElement.src = opp.assetUrl;
+                    opp.customElement.crossOrigin = "anonymous";
+                }
+            }
+        }
+
+        function loadPresetMap(mapType) {
+            if(!mapType) return;
+            mapBlocks = []; 
+            if(mapType === 'gauntlet') {
+                mapBlocks.push({r: 5, c: 8, t: 'brick'}, {r: 5, c: 9, t: 'brick'});
+                mapBlocks.push({r: 4, c: 13, t: 'brick'}, {r: 5, c: 13, t: 'cactus'});
+                mapBlocks.push({r: 5, c: 17, t: 'cactus'}, {r: 5, c: 20, t: 'brick'});
+            } else if (mapType === 'tower') {
+                mapBlocks.push({r: 5, c: 6, t: 'brick'}, {r: 4, c: 9, t: 'brick'});
+                mapBlocks.push({r: 3, c: 12, t: 'brick'}, {r: 2, c: 15, t: 'brick'});
+                mapBlocks.push({r: 3, c: 18, t: 'brick'}, {r: 5, c: 21, t: 'brick'});
+            }
+            broadcastBlocks();
+            document.getElementById('map-select').value = ""; 
+        }
 
         try {
             if (typeof mqtt !== 'undefined') {
                 mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
-                    keepalive: 10,
-                    reconnectPeriod: 1000,
-                    connectTimeout: 5000
+                    keepalive: 10, reconnectPeriod: 1000, connectTimeout: 5000
                 });
                 
                 mqttClient.on('connect', () => {
@@ -128,28 +260,29 @@
                             appendLog(`<b style="color: ${data.color};">${escapeHTML(data.name)}:</b> ${escapeHTML(data.text)}`);
                             return;
                         }
-
                         if (data.type === 'leave') {
-                            if (players[data.id]) {
-                                appendLog(`<i>System: ${escapeHTML(players[data.id].name)} left the room.</i>`);
-                                delete players[data.id];
+                            if (players[data.id]) delete players[data.id];
+                            updateLobbyCount(); return;
+                        }
+                        if (data.type === 'mapSync') {
+                            mapBlocks = data.blocks; 
+                            if(data.mapVideoUrl !== undefined && data.mapVideoUrl !== currentMapVideoUrl) {
+                                document.getElementById('map-video-url').value = data.mapVideoUrl;
+                                loadMapVideoWallpaper(data.mapVideoUrl);
                             }
-                            updateLobbyCount();
                             return;
                         }
 
                         if (data.type === 'update') {
-                            if (!players[data.id]) {
-                                appendLog(`<i>System: ${escapeHTML(data.name)} linked up!</i>`);
-                            }
-
                             let activeKeys = Object.keys(players);
                             if (!players[data.id]) activeKeys.push(data.id);
-                            activeKeys.push(myShortId);
-                            activeKeys.sort();
+                            activeKeys.push(myShortId); activeKeys.sort();
 
                             p1.x = 40 + (activeKeys.indexOf(myShortId) * 45);
                             let layoutIndex = activeKeys.indexOf(data.id);
+
+                            // Cache or update texture references safely
+                            const prevElement = (players[data.id] && players[data.id].assetUrl === data.assetUrl) ? players[data.id].customElement : null;
 
                             players[data.id] = {
                                 x: 40 + (layoutIndex * 45),
@@ -158,21 +291,20 @@
                                 score: data.score,
                                 color: data.color,
                                 name: data.name,
+                                costume: data.costume || 'none',
+                                assetUrl: data.assetUrl || '',
+                                customElement: prevElement,
                                 lastSeen: Date.now()
                             };
 
+                            verifyOpponentAsset(players[data.id]);
                             updateLobbyCount();
 
                             if (isHost()) {
-                                if (data.speedSync) {
-                                    cactus.speed = data.speedSync;
-                                    document.getElementById('gameSpeed').value = data.speedSync;
-                                }
+                                if (data.speedSync) cactus.speed = data.speedSync;
                             } else {
                                 if (data.isHostPlayer) {
-                                    cactus.x = data.cx;
-                                    cactus.speed = data.speed;
-                                    document.getElementById('gameSpeed').value = data.speed;
+                                    cactus.x = data.cx; cactus.speed = data.speed;
                                 }
                             }
                         }
@@ -193,156 +325,64 @@
         }
 
         function setupRoomChannels(roomName) {
-            if (!isServerConnected) return alert("Network layer connecting, wait a second.");
-            
+            if (!isServerConnected) return;
             if (currentRoom) {
                 mqttClient.publish('dino_arena/' + currentRoom, JSON.stringify({ type: 'leave', id: myShortId }));
                 mqttClient.unsubscribe('dino_arena/' + currentRoom);
             }
-            
-            currentRoom = roomName;
-            players = {}; 
+            currentRoom = roomName; players = {}; mapBlocks = [];
             p1.x = 40; p1.score = 0; p1.isDead = false;
             document.getElementById('respawnBtn').style.display = 'none';
-            
             mqttClient.subscribe('dino_arena/' + currentRoom);
-            
-            if (currentRoom === myShortId) {
-                document.getElementById('connection-controls').style.display = 'flex';
-                document.getElementById('leaveBtn').style.display = 'none';
-                document.getElementById('status').innerText = `🏠 Hosting Room: ${currentRoom}`;
-            } else {
-                document.getElementById('connection-controls').style.display = 'none';
-                document.getElementById('leaveBtn').style.display = 'inline-block';
-                document.getElementById('status').innerText = `🔗 Connected to Room: ${currentRoom}`;
-            }
-            
             updateLobbyCount();
-            appendLog(`<i>System: Switch room channel to [${roomName}]. Connecting...</i>`);
         }
 
         function isHost() {
             if (!currentRoom) return true;
-            let activeIds = Object.keys(players);
-            activeIds.push(myShortId);
-            activeIds.sort();
+            let activeIds = Object.keys(players); activeIds.push(myShortId); activeIds.sort();
             return activeIds[0] === myShortId;
         }
 
         function changeSpeed(val) {
             let num = parseFloat(val);
-            if (isNaN(num) || num < 1) num = 1;
-            cactus.speed = num;
+            if (!isNaN(num) && num >= 1) cactus.speed = num;
         }
 
-        function sendChat() {
-            const input = document.getElementById('chat-input');
-            const text = input.value.trim();
-            const uName = document.getElementById('username-input').value.trim() || "Player";
-            if (!text) return;
-
-            if (currentRoom && isServerConnected) {
-                mqttClient.publish('dino_arena/' + currentRoom, JSON.stringify({ type: 'chat', id: myShortId, name: uName, color: myColor, text: text }));
-                appendLog(`<b style="color: ${myColor};">You:</b> ${escapeHTML(text)}`);
-                input.value = '';
+        function toggleBuildMode() {
+            isBuildMode = !isBuildMode;
+            const btn = document.getElementById('buildModeBtn');
+            const toolsMenu = document.getElementById('build-tools');
+            if(isBuildMode) {
+                btn.innerText = "🧱 Build Mode: ON"; btn.style.background = "#16a34a"; toolsMenu.style.display = "block";
+            } else {
+                btn.innerText = "🧱 Build Mode: OFF"; btn.style.background = "#ea580c"; toolsMenu.style.display = "none";
             }
         }
 
-        function leaveMatch() {
-            setupRoomChannels(myShortId);
+        function setBuildTool(tool) {
+            selectedTool = tool;
+            document.getElementById('tool-brick').classList.remove('active-tool');
+            document.getElementById('tool-cactus').classList.remove('active-tool');
+            if(tool === 'brick') document.getElementById('tool-brick').classList.add('active-tool');
+            if(tool === 'cactus') document.getElementById('tool-cactus').classList.add('active-tool');
         }
 
-        function appendLog(htmlContent) {
-            const log = document.getElementById('chat-log');
-            log.innerHTML += "<div>" + htmlContent + "</div>";
-            log.scrollTop = log.scrollHeight; 
-        }
-
-        function escapeHTML(str) {
-            return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        }
-
-        function jump() {
-            if (!p1.isDead) {
-                if (document.getElementById('infJump').checked || !p1.isJumping) {
-                    p1.vy = -10; p1.isJumping = true;
-                }
-            }
-        }
-        
-        window.addEventListener('keydown', e => { 
-            if(document.activeElement.tagName === 'INPUT') return;
-            if(e.code === 'Space') jump(); 
-        });
-        document.getElementById('touch-pad').addEventListener('touchstart', (e) => { e.preventDefault(); jump(); });
-        document.getElementById('touch-pad').addEventListener('mousedown', jump);
-
-        function respawnMe() {
-            p1.isDead = false; p1.y = 110; p1.vy = 0; p1.isJumping = false; p1.score = 0;            
-            lastScoreTick = Date.now(); 
-            document.getElementById('respawnBtn').style.display = 'none';
-            if (isHost()) { cactus.x = 600; cactus.speed = parseFloat(document.getElementById('gameSpeed').value) || 5; }
-        }
-
-        function loop() {
-            const currentNameSetting = document.getElementById('username-input').value.trim() || "Player";
-            
-            p1.vy += 0.6; p1.y += p1.vy;
-            if (p1.y > 110) { p1.y = 110; p1.vy = 0; p1.isJumping = false; }
-
-            if (!p1.isDead) {
-                if (p1.x < cactus.x + cactus.width && p1.x + 25 > cactus.x &&
-                    p1.y < cactus.y + cactus.height && p1.y + 25 > cactus.y && 
-                    !document.getElementById('godMode').checked) {
-                        p1.isDead = true;
-                        document.getElementById('respawnBtn').style.display = 'inline-block';
-                }
-                let currentTime = Date.now();
-                if (currentTime - lastScoreTick >= 100) { p1.score++; lastScoreTick = currentTime; }
-            }
-
-            if (isHost()) {
-                let targetSpeed = parseFloat(document.getElementById('gameSpeed').value) || 5;
-                if(cactus.speed !== targetSpeed && !p1.isDead) cactus.speed = targetSpeed;
-                cactus.x -= cactus.speed;
-                if (cactus.x < -20) { 
-                    cactus.x = 600; 
-                    let currentSetting = parseFloat(document.getElementById('gameSpeed').value) || 5;
-                    document.getElementById('gameSpeed').value = (currentSetting + 0.2).toFixed(1);
-                    changeSpeed(document.getElementById('gameSpeed').value);
-                }
-            }
-
-            let now = Date.now();
-            Object.keys(players).forEach(id => { if (now - players[id].lastSeen > 3000) { delete players[id]; updateLobbyCount(); } });
-
+        function broadcastBlocks() {
             if (currentRoom && isServerConnected) {
                 mqttClient.publish('dino_arena/' + currentRoom, JSON.stringify({
-                    type: 'update', id: myShortId, name: currentNameSetting, y: p1.y, isDead: p1.isDead, score: p1.score, color: myColor, isHostPlayer: isHost(), cx: cactus.x, speed: cactus.speed
+                    type: 'mapSync', id: myShortId, blocks: mapBlocks, mapVideoUrl: currentMapVideoUrl
                 }));
             }
-
-            ctx.clearRect(0, 0, 600, 150);
-            ctx.fillStyle = '#6b7280'; ctx.fillRect(0, 135, 600, 2); 
-            
-            ctx.fillStyle = p1.isDead ? '#9ca3af' : p1.color; ctx.fillRect(p1.x, p1.y, 25, 25); 
-            ctx.fillStyle = '#374151'; ctx.font = '10px sans-serif'; ctx.fillText(currentNameSetting, p1.x - 5, p1.y - 8);
-
-            Object.keys(players).forEach(id => {
-                let opp = players[id];
-                ctx.fillStyle = opp.isDead ? '#d1d5db' : opp.color; ctx.fillRect(opp.x, opp.y, 25, 25);
-                ctx.fillStyle = '#374151'; ctx.fillText(opp.name, opp.x - 5, opp.y - 8);
-            });
-            
-            ctx.fillStyle = '#15803d'; ctx.fillRect(cactus.x, cactus.y, cactus.width, cactus.height); 
-            ctx.fillStyle = '#374151'; ctx.font = 'bold 11px sans-serif'; 
-            let scoreString = `${currentNameSetting}: ${p1.score}`;
-            Object.keys(players).forEach(id => { scoreString += `  |  ${players[id].name}: ${players[id].score}`; });
-            ctx.fillText(scoreString, 10, 20);
-
-            requestAnimationFrame(loop);
         }
-        loop();
-    </script>
-</body>
-</html>
+
+        canvas.addEventListener('mousedown', function(e) {
+            if(!isBuildMode) return;
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width; const scaleY = canvas.height / rect.height;
+            const clickX = (e.clientX - rect.left) * scaleX; const clickY = (e.clientY - rect.top) * scaleY;
+            const col = Math.floor(clickX / GRID_SIZE); const row = Math.floor(clickY / GRID_SIZE);
+
+            if(col < 3 && row > 3) return;
+            const existingIndex = mapBlocks.findIndex(b => b.r === row && b.c === col);
+            if(existingIndex > -1) mapBlocks.splice(existingIndex, 1);
+            else mapBlocks.push({ r: row, c: col, t
